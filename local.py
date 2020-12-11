@@ -3,6 +3,7 @@
 import numpy as np
 import healpy as hp
 import pickle
+import sys
 
 # cmblensplus/curvedsky/
 import curvedsky as cs
@@ -20,7 +21,7 @@ def data_directory():
 
     root = '/global/cscratch1/sd/toshiyan/plk/'
     direct['dr2']  = '/project/projectdirs/cmb/data/planck2015/'
-    direct['dr3']  = '/project/projectdirs/cmb/data/planck2018/'
+    direct['dr3']  = '/project/projectdirs/cmb/data/planck2018/pr3/'
     direct['root'] = root
     direct['inp']  = root + 'input/'
     direct['win']  = root + 'mask/'
@@ -63,7 +64,7 @@ class cmb:
 #* Define parameters
 class analysis:
 
-    def __init__(self,snmin=0,snmax=100,dtype='dr3',freq='143',fltr='none',lmin=1,lmax=2048,olmin=1,olmax=2048,wtype='Lmask',ascale=1.,biref=False):
+    def __init__(self,snmin=0,snmax=100,dtype='full',freq='143',fltr='none',lmin=1,lmax=2048,olmin=1,olmax=2048,wtype='base',ascale=1.,biref=False):
 
         #//// load config file ////#
         conf = misctools.load_config('CMB')
@@ -82,8 +83,18 @@ class analysis:
         self.olmin  = conf.getint('olmin',olmin)
         self.olmax  = conf.getint('olmax',olmax)
 
-        # cmb map
+        # full or half mission
         self.dtype  = conf.get('dtype',dtype)
+        if self.dtype not in ['full','hm1','hm2']:
+            sys.exit('data type is not supported')
+        
+        self.dname  = self.dtype
+        if self.dtype == 'hm1':
+            self.dname = 'halfmission-1'
+        if self.dtype == 'hm2':
+            self.dname = 'halfmission-2'
+
+        # cmb map
         self.freq   = conf.get('freq',freq)
         self.biref  = conf.getboolean('biref',biref)
         self.fltr   = conf.get('fltr',fltr)
@@ -132,50 +143,30 @@ class analysis:
         PLK = d[self.dtype]
         self.fimap = {}
 
-        # PLANCK DR2
-        if self.dtype == 'dr2':
-            if self.freq in ['nilc','smicaffp8']:
-                self.fimap['s']  = [PLK+'ffp8/compsep/mc_cmb/ffp8_'+self.freq+'_int_cmb_mc_'+x+'_005a_2048.fits' for x in ids]
-                self.fimap['n']  = [PLK+'ffp8/compsep/mc_noise/ffp8_'+self.freq+'_int_noise_mc_'+x+'_005a_2048.fits' for x in ids]
+        # PLANCK DR3 and FFP10 sims
+        # simulation
+        if self.freq in ['smica']:
+            self.fimap['s'] = [PLK+'ffp10/compsep/mc_cmb/dx12_v3_'+self.freq+'_cmb_mc_'+x+'_raw.fits' for x in ids]
+            self.fimap['n'] = [PLK+'ffp10/compsep/mc_noise/dx12_v3_'+self.freq+'_noise_mc_'+x+'_raw.fits' for x in ids]
 
-            if self.freq == 'smica':
-                self.fimap['s']  = [PLK+'ffp8.1/compsep/dx11_v2_smica_int_cmb_new_mc_'+x+'_005a_2048.fits' for x in ids]
-                self.fimap['n']  = [PLK+'ffp8.1/compsep/dx11_v2_smica_int_noise_mc_'+x+'_005a_2048.fits' for x in ids]
+        if self.freq in ['100','143','217','353']:
+            self.fimap['s']  = [PLK+'ffp10/mc_cmb/'+self.freq+'/febecop_ffp10_lensed_scl_cmb_'+self.freq+'_mc_0'+x+'.fits' for x in ids]
+            self.fimap['n']  = [PLK+'ffp10/mc_noise/'+self.freq+'/ffp10_noise_'+self.freq+'_'+self.dtype+'_map_mc_'+x+'.fits' for x in ids]
+
+        # replace 1st rlz to real data
+        if self.freq in ['smica']:
+            self.fimap['s'][0] = d['cmb']+'/map/COM_CMB_IQU-'+self.freq+'_2048_R3.00_'+self.dname+'.fits'
         
-            if self.freq == 'smicahm': # smica half mission
-                smap1 = [PLK+'ffp8.1/compsep/dx11_v2_smica_int_cmb_new_hm1_mc_'+x+'_005a_2048.fits' for x in ids]
-                smap2 = [PLK+'ffp8.1/compsep/dx11_v2_smica_int_cmb_new_hm2_mc_'+x+'_005a_2048.fits' for x in ids]
-                nmap1 = [PLK+'ffp8.1/compsep/dx11_v2_smica_int_noise_hm1_mc_'+x+'_005a_2048.fits' for x in ids]
-                nmap2 = [PLK+'ffp8.1/compsep/dx11_v2_smica_int_noise_hm2_mc_'+x+'_005a_2048.fits' for x in ids]
-                self.fimap['s'] = [smap1,smap2]
-                self.fimap['n'] = [nmap1,nmap2]
-                # real data
-                self.fimap['s'][0][0] = PLK+'pr2/cmbmaps/COM_CMB_IQU-smica-field-Int_2048_R2.01_halfmission-1.fits'
-                self.fimap['s'][0][1] = PLK+'pr2/cmbmaps/COM_CMB_IQU-smica-field-Int_2048_R2.01_halfmission-2.fits'
+        if self.freq == ['100','143','217','353']:
+            self.fimap['s'][0] = PLK+'pr3/frequencymaps/HFI_SkyMap_'+self.freq+'_2048_R3.01_'+self.dname+'.fits'
 
-            # replace 1st rlz to real data
-            if self.freq in ['nilc','smica']:
-                self.fimap['s'][0] = PLK+'pr2/cmbmaps/COM_CMB_IQU-'+self.freq+'-field-Int_2048_R2.01_full.fits'
-        
-            if self.freq == 'smicaffp8': #same as dr2_smica
-                self.fimap['s'][0] = PLK+'pr2/cmbmaps/COM_CMB_IQU-smica-field-Int_2048_R2.01_full.fits'
-        
-            # aps of Planck 2015 best fit cosmology
-            self.flcl = d['inp'] + 'COM_PowerSpect_CMB-base-plikHM-TT-lowTEB-minimum-theory_R2.02.txt'
-
-        # PLANCK DR3
-        if self.dtype == 'dr3':
-            if self.freq in ['nilc','smica','nosz']:
-                self.fimap['s'] = [PLK+'ffp10/compsep/mc_cmb/ffp8_'+self.freq+'_int_cmb_mc_'+x+'_005a_2048.fits' for x in ids]
-                self.fimap['n'] = [PLK+'ffp10/compsep/mc_noise/ffp8_'+self.freq+'_int_noise_mc_'+x+'_005a_2048.fits' for x in ids]
-
-            # aps of Planck 2018 best fit cosmology
-            self.flcl = d['inp'] + 'COM_PowerSpect_CMB-base-plikHM-TT-lowTEB-minimum-theory_R2.02.txt'
+        # aps of Planck 2015 best fit cosmology
+        self.flcl = d['inp'] + 'COM_PowerSpect_CMB-base-plikHM-TT-lowTEB-minimum-theory_R2.02.txt'
 
         # input klm realizations
         self.fiklm = [ d['inp'] + 'sky_klms/sim_'+x[1:]+'_klm.fits' for x in ids ]
         if self.biref:
-            self.fbalm = [ d['inp'] + 'sky_blms/sim_biref_'+x[1:]+'_tlm.fits' for x in ids ]
+            self.fbalm = [ d['inp'] + 'sky_blms/sim_'+x[1:]+'_blm.fits' for x in ids ]
         else:
             self.fbalm = None
 
@@ -192,17 +183,11 @@ class analysis:
         self.fbeam = d['bem'] + self.dtype+'_'+self.freq+'.dat'
 
         # extra gaussian random fields
-        if self.freq == 'nosz':
-            # for nosz noise
-            self.fnseed  = [d['nosz']+'seed_'+x+'.fits' for x in ids]
-            self.fnosz_nl = d['nosz']+'noise_aps.dat'
-            self.fimap['p'] = [x for x in ids]
-        else:
-            # ptsr seed
-            self.fpseed  = [d['ptsr']+x+'.fits' for x in ids]
-            ptag = self.wtype+'_a'+str(self.ascale)+'deg'
-            self.fptsrcl = d['ptsr']+'ptsr_'+ptag+'.dat'
-            self.fimap['p'] = [d['ptsr']+'ptsr_'+ptag+'_'+x+'.fits' for x in ids]
+        # ptsr seed
+        self.fpseed  = [d['ptsr']+x+'.fits' for x in ids]
+        ptag = self.wtype+'_a'+str(self.ascale)+'deg'
+        self.fptsrcl = d['ptsr']+'ptsr_'+ptag+'.dat'
+        self.fimap['p'] = [d['ptsr']+'ptsr_'+ptag+'_'+x+'.fits' for x in ids]
 
             
     def set_mask_filename(self):
@@ -222,8 +207,8 @@ class analysis:
             self.fmask = dwin + 'COM_Mask_Lensing_2048_R3.00.fits'
         elif self.wtype == 'G60':
             self.fmask = dwin + 'COM_Mask_Lensing_2048_R2.00_G60.fits'
-        elif self.wtype == 'GMK':
-            self.fmask = dwin + 'MK20_'+self.freq+'.fits'
+        elif self.wtype == 'base':
+            self.fmask = dwin + 'PR3_'+self.dtype+'_'+str(self.freq)+'.fits'
         else:
             sys.exit('unknown wtype')
         
@@ -262,6 +247,9 @@ def init_analysis(**kwargs):
     analysis.set_mask_filename(p)
     return p
 
+#----------------
+# mask related
+#----------------
 
 def set_mask(fmask):
 
@@ -283,6 +271,46 @@ def set_mask(fmask):
     return w, M, wn
 
 
+def bad_pixel_mask(obsmap,val=-1e-30):
+    badpix = obsmap.copy()
+    badpix[badpix>val] = 1.
+    badpix[badpix!=1] = 0.
+    return badpix
+
+
+def mask_co_line(freq):
+    
+    d = data_directory()
+    
+    if freq!=143:
+        # ratio in logscale
+        McoI = hp.read_map(d['win']+'HFI_BiasMap_'+str(freq)+'-CO-noiseRatio_2048_R3.00_full.fits',field=0)
+        McoQ = hp.read_map(d['win']+'HFI_BiasMap_'+str(freq)+'-CO-noiseRatio_2048_R3.00_full.fits',field=1)
+        McoU = hp.read_map(d['win']+'HFI_BiasMap_'+str(freq)+'-CO-noiseRatio_2048_R3.00_full.fits',field=2)
+        McoI[McoI<-2] = 0.
+        McoI[McoI!=0] = 1.
+        McoQ[McoQ<-2] = 0.
+        McoQ[McoQ!=0] = 1.
+        McoU[McoU<-2] = 0.
+        McoU[McoU!=0] = 1.
+        Mco = (1.-McoQ)*(1.-McoU)*(1.-McoI)
+    else:
+        Mco = 1.
+
+    return Mco
+
+
+def mask_ptsr(freq):
+    d = data_directory()
+    freqn = {100: 0, 143: 1, 217: 2, 353: 3}
+    MptsrI = hp.fitsfunc.read_map(d['win']+'HFI_Mask_PointSrc_2048_R2.00.fits',hdu=1,field=freqn[freq]) #100-353
+    MptsrP = hp.fitsfunc.read_map(d['win']+'HFI_Mask_PointSrc_2048_R2.00.fits',hdu=2,field=freqn[freq]) #100-353
+    return MptsrI*MptsrP
+
+
+#-----------------------------
+# foreground/experiment model
+#-----------------------------
 
 def foreground(nu,L,name,beta_d=1.5,beta_s=-3.1):
     L80 = L/80.
@@ -356,6 +384,9 @@ def experiments(name):
     return freqs, sigps, thetas
 
 
+#-----------------------------
+# Others
+#-----------------------------
 
 def sim_iamp(i,M,palm,lmax,rlmin,rlmax,Ag,ocl,lcl,nl,beta,freq):
     
