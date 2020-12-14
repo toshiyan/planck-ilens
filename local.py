@@ -13,15 +13,15 @@ import cmb as CMB
 import misctools
 import analysis as ana
 
+# from pylib
+import planck_filename as plf
 
 
 def data_directory():
     
     direct = {}
 
-    root = '/global/cscratch1/sd/toshiyan/plk/'
-    direct['dr2']  = '/project/projectdirs/cmb/data/planck2015/'
-    direct['dr3']  = '/project/projectdirs/cmb/data/planck2018/pr3/'
+    root = '/global/cscratch1/sd/toshiyan/plk_biref/'
     direct['root'] = root
     direct['inp']  = root + 'input/'
     direct['win']  = root + 'mask/'
@@ -64,7 +64,7 @@ class cmb:
 #* Define parameters
 class analysis:
 
-    def __init__(self,snmin=0,snmax=100,dtype='full',freq='143',fltr='none',lmin=1,lmax=2048,olmin=1,olmax=2048,wtype='base',ascale=1.,biref=False):
+    def __init__(self,snmin=0,snmax=100,dtype='full',freq='143',fltr='none',lmin=1,lmax=2048,olmin=1,olmax=2048,wind='base',ascale=1.,biref=False):
 
         #//// load config file ////#
         conf = misctools.load_config('CMB')
@@ -88,12 +88,6 @@ class analysis:
         if self.dtype not in ['full','hm1','hm2']:
             sys.exit('data type is not supported')
         
-        self.dname  = self.dtype
-        if self.dtype == 'hm1':
-            self.dname = 'halfmission-1'
-        if self.dtype == 'hm2':
-            self.dname = 'halfmission-2'
-
         # cmb map
         self.freq   = conf.get('freq',freq)
         self.biref  = conf.getboolean('biref',biref)
@@ -101,16 +95,14 @@ class analysis:
         if self.fltr == 'cinv':  ascale = 0.
 
         # window
-        self.wtype  = conf.get('wtype',wtype)
-        if self.wtype == 'Fullsky':  
+        self.wind  = conf.get('wind',wind)
+        if self.wind == 'Fullsky':  
             ascale = 0.
             self.fltr == 'none'
         self.ascale = conf.getfloat('ascale',ascale)
 
         # cmb scaling (correction to different cosmology)
         self.sscale = 1.
-        if self.dtype in ['dr2_nilc','dr2_smicaffp8']:  
-            self.sscale = 1.0134 # suggested by Planck team
 
         # noise scaling (correction to underestimate of noise in sim)
         self.nscale = 1.
@@ -124,47 +116,26 @@ class analysis:
         #//// basic tags ////#
         # for alm
         apotag = 'a'+str(self.ascale)+'deg'
-        if self.biref: 
-            self.stag = '_'.join( [ self.dtype , self.freq, self.wtype , apotag , self.fltr , 'biref' ] )
-        else: 
-            self.stag = '_'.join( [ self.dtype , self.freq, self.wtype , apotag , self.fltr ] )
-        self.ntag = '_'.join( [ self.dtype , self.freq, self.wtype , apotag , self.fltr ] )
+        self.stag = '_'.join( [ self.dtype , self.freq, self.wind , apotag , self.fltr ] )
+        self.ntag = self.stag
+        if self.biref:  self.stag = self.stag + '_biref'
 
-        # output multipole range
-        self.otag = '_oL'+str(self.olmin)+'-'+str(self.olmax)+'_b'+str(self.bn)
+        #//// Input public maps ////#
+        # PLANCK DR3 and FFP10 sims
+        self.fimap = plf.load_iqu_filename(PR=3,dtype=self.dtype,freq=self.freq)
+
+        # input klm realizations
+        self.fiklm = [ plf.subd['pr2']['lens'] + 'sky_klms/sim_'+x[1:]+'_klm.fits' for x in ids ]
+
+        # aps of Planck 2015 best fit cosmology
+        self.flcl = plf.subd['pr2']['cosmo'] + 'COM_PowerSpect_CMB-base-plikHM-TT-lowTEB-minimum-theory_R2.02.txt'
 
         #//// index ////#
         self.ids = [str(i).zfill(5) for i in range(-1,100)]
         self.ids[0] = 'real'  # change 1st index
         ids = self.ids
 
-        #//// Input public maps ////#
-        # sim
-        PLK = d[self.dtype]
-        self.fimap = {}
-
-        # PLANCK DR3 and FFP10 sims
-        # simulation
-        if self.freq in ['smica']:
-            self.fimap['s'] = [PLK+'ffp10/compsep/mc_cmb/dx12_v3_'+self.freq+'_cmb_mc_'+x+'_raw.fits' for x in ids]
-            self.fimap['n'] = [PLK+'ffp10/compsep/mc_noise/dx12_v3_'+self.freq+'_noise_mc_'+x+'_raw.fits' for x in ids]
-
-        if self.freq in ['100','143','217','353']:
-            self.fimap['s']  = [PLK+'ffp10/mc_cmb/'+self.freq+'/febecop_ffp10_lensed_scl_cmb_'+self.freq+'_mc_0'+x+'.fits' for x in ids]
-            self.fimap['n']  = [PLK+'ffp10/mc_noise/'+self.freq+'/ffp10_noise_'+self.freq+'_'+self.dtype+'_map_mc_'+x+'.fits' for x in ids]
-
-        # replace 1st rlz to real data
-        if self.freq in ['smica']:
-            self.fimap['s'][0] = d['cmb']+'/map/COM_CMB_IQU-'+self.freq+'_2048_R3.00_'+self.dname+'.fits'
-        
-        if self.freq == ['100','143','217','353']:
-            self.fimap['s'][0] = PLK+'pr3/frequencymaps/HFI_SkyMap_'+self.freq+'_2048_R3.01_'+self.dname+'.fits'
-
-        # aps of Planck 2015 best fit cosmology
-        self.flcl = d['inp'] + 'COM_PowerSpect_CMB-base-plikHM-TT-lowTEB-minimum-theory_R2.02.txt'
-
         # input klm realizations
-        self.fiklm = [ d['inp'] + 'sky_klms/sim_'+x[1:]+'_klm.fits' for x in ids ]
         if self.biref:
             self.fbalm = [ d['inp'] + 'sky_blms/sim_'+x[1:]+'_blm.fits' for x in ids ]
         else:
@@ -180,14 +151,14 @@ class analysis:
         self.fcmb = cmb(self)
 
         # beam
-        self.fbeam = d['bem'] + self.dtype+'_'+self.freq+'.dat'
+        self.fbeam = d['bem'] + self.freq + '.dat'
 
         # extra gaussian random fields
         # ptsr seed
         self.fpseed  = [d['ptsr']+x+'.fits' for x in ids]
-        ptag = self.wtype+'_a'+str(self.ascale)+'deg'
+        ptag = self.wind + '_a'+str(self.ascale)+'deg'
         self.fptsrcl = d['ptsr']+'ptsr_'+ptag+'.dat'
-        self.fimap['p'] = [d['ptsr']+'ptsr_'+ptag+'_'+x+'.fits' for x in ids]
+        self.fimap['p'] = [ d['ptsr'] + 'ptsr_'+ptag+'_'+x+'.fits' for x in ids]
 
             
     def set_mask_filename(self):
@@ -199,18 +170,18 @@ class analysis:
         self.fmask_Gfsky = dwin + 'HFI_Mask_GalPlane-apo0_2048_R2.00.fits' 
         
         # set mask filename
-        if   self.wtype == 'Fullsky':
+        if   self.wind == 'Fullsky':
             self.fmask = ''
-        elif self.wtype in 'LmaskDR2':
+        elif self.wind in 'LmaskDR2':
             self.fmask = dwin + 'COM_Mask_Lensing_2048_R2.00.fits'
-        elif self.wtype == 'LmaskDR3':
+        elif self.wind == 'LmaskDR3':
             self.fmask = dwin + 'COM_Mask_Lensing_2048_R3.00.fits'
-        elif self.wtype == 'G60':
+        elif self.wind == 'G60':
             self.fmask = dwin + 'COM_Mask_Lensing_2048_R2.00_G60.fits'
-        elif self.wtype == 'base':
+        elif self.wind == 'base':
             self.fmask = dwin + 'PR3_'+self.dtype+'_'+str(self.freq)+'.fits'
         else:
-            sys.exit('unknown wtype')
+            sys.exit('unknown wind')
         
         # apodized map
         self.famask = self.fmask.replace('.fits','_a'+str(self.ascale)+'deg.fits')
@@ -234,13 +205,11 @@ class analysis:
         self.ckk = self.lcl[4,:] * (self.l**2+self.l)**2/4.
 
 
-
 #----------------
 # initial setup
 #----------------
 
-def init_analysis(**kwargs):
-    # setup parameters, filenames, and arrays
+def init_analysis(**kwargs):  # setup parameters, filenames, and arrays
     p = analysis(**kwargs)
     analysis.filename(p)
     analysis.array(p)
