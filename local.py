@@ -12,6 +12,7 @@ import curvedsky as cs
 import cmb as CMB
 import misctools
 import analysis as ana
+import constants
 
 # from pylib
 import planck_filename as plf
@@ -37,7 +38,7 @@ def data_directory():
 # * Define CMB file names
 class cmb:
 
-    def __init__(self,p,mtype=['T']):
+    def __init__(self,aobj,mtype=['T']):
 
         # set directory
         d = data_directory()
@@ -46,19 +47,18 @@ class cmb:
         d_map = d['cmb'] + 'map/'
 
         # cmb signal/noise alms
-        self.alms = {}
+        self.alms, self.scl, self.cl, self.xcl, self.ocl = {}, {}, {}, {}, {}
         for s in ['s','n','p','c']:
             self.alms[s] = {}
-            if s in ['n','p']: tag = p.ntag
-            if s in ['s','c']: tag = p.stag
+            if s in ['n','p']: tag = aobj.ntag
+            if s in ['s','c']: tag = aobj.stag
             for m in mtype:
-                self.alms[s][m] = [d_alm+'/'+s+'_'+m+'_'+tag+'_'+x+'.pkl' for x in p.ids]
-
-        # cmb aps
-        self.scl = d_aps+'aps_sim_1d_'+p.stag+'.dat'
-        self.cl  = [d_aps+'/rlz/cl_'+p.stag+'_'+x+'.dat' for x in p.ids]
-        self.xcl = d_aps+'aps_sim_1d_'+p.stag+'_cross.dat'
-        self.ocl = d_aps+'aps_obs_1d_'+p.stag+'.dat'
+                self.alms[s][m] = [d_alm+'/'+s+'_'+m+'_'+tag+'_'+x+'.pkl' for x in aobj.ids]
+            # cmb aps
+            self.scl[s] = d_aps+'aps_sim_1d_'+s+'_'+aobj.stag+'.dat'
+            self.cl[s]  = [d_aps+'/rlz/cl_'+s+'_'+aobj.stag+'_'+x+'.dat' for x in aobj.ids]
+            self.xcl[s] = d_aps+'aps_sim_1d_'+s+'_'+aobj.stag+'_cross.dat'
+            self.ocl[s] = d_aps+'aps_obs_1d_'+s+'_'+aobj.stag+'.dat'
 
 
 #* Define parameters
@@ -121,6 +121,11 @@ class analysis:
         if self.biref:  self.stag = self.stag + '_biref'
 
         #//// Input public maps ////#
+        #//// index ////#
+        self.ids = [str(i).zfill(5) for i in range(-1,100)]
+        self.ids[0] = 'real'  # change 1st index
+        ids = self.ids
+
         # PLANCK DR3 and FFP10 sims
         self.fimap = plf.load_iqu_filename(PR=3,dtype=self.dtype,freq=self.freq)
 
@@ -128,12 +133,7 @@ class analysis:
         self.fiklm = [ plf.subd['pr2']['lens'] + 'sky_klms/sim_'+x[1:]+'_klm.fits' for x in ids ]
 
         # aps of Planck 2015 best fit cosmology
-        self.flcl = plf.subd['pr2']['cosmo'] + 'COM_PowerSpect_CMB-base-plikHM-TT-lowTEB-minimum-theory_R2.02.txt'
-
-        #//// index ////#
-        self.ids = [str(i).zfill(5) for i in range(-1,100)]
-        self.ids[0] = 'real'  # change 1st index
-        ids = self.ids
+        self.flcl = plf.subd['pr3']['cosmo'] + 'COM_PowerSpect_CMB-base-plikHM-TTTEEE-lowl-lowE-lensing-minimum-theory_R3.01.txt'
 
         # input klm realizations
         if self.biref:
@@ -172,8 +172,6 @@ class analysis:
         # set mask filename
         if   self.wind == 'Fullsky':
             self.fmask = ''
-        elif self.wind in 'LmaskDR2':
-            self.fmask = dwin + 'COM_Mask_Lensing_2048_R2.00.fits'
         elif self.wind == 'LmaskDR3':
             self.fmask = dwin + 'COM_Mask_Lensing_2048_R3.00.fits'
         elif self.wind == 'G60':
@@ -197,10 +195,10 @@ class analysis:
         self.kL = self.l*(self.l+1)*.5
 
         #theoretical cl
-        self.lcl = np.zeros((5,self.lmax+1)) # TT, TE, EE, BB, PP
-        self.lcl[:,2:] = np.loadtxt(self.flcl,unpack=True,usecols=(1,2,3,4,5))[:,:self.lmax-1] 
+        self.lcl = np.zeros((5,self.lmax+1)) # TT, EE, BB, TE, PP
+        self.lcl[:,2:] = np.loadtxt(self.flcl,unpack=True,usecols=(1,3,4,2,5))[:,:self.lmax-1] 
         self.lcl *= 2.*np.pi / (self.l**2+self.l+1e-30)
-        self.lcl[0:1,:] /= constants.Tcmb**2 
+        self.lcl[0:4,:] /= constants.Tcmb**2 
         self.cpp = self.lcl[4,:]
         self.ckk = self.lcl[4,:] * (self.l**2+self.l)**2/4.
 
@@ -251,7 +249,7 @@ def mask_co_line(freq):
     
     d = data_directory()
     
-    if freq!=143:
+    if freq!='143':
         # ratio in logscale
         McoI = hp.read_map(d['win']+'HFI_BiasMap_'+str(freq)+'-CO-noiseRatio_2048_R3.00_full.fits',field=0)
         McoQ = hp.read_map(d['win']+'HFI_BiasMap_'+str(freq)+'-CO-noiseRatio_2048_R3.00_full.fits',field=1)
@@ -271,7 +269,7 @@ def mask_co_line(freq):
 
 def mask_ptsr(freq):
     d = data_directory()
-    freqn = {100: 0, 143: 1, 217: 2, 353: 3}
+    freqn = {'100': 0, '143': 1, '217': 2, '353': 3}
     MptsrI = hp.fitsfunc.read_map(d['win']+'HFI_Mask_PointSrc_2048_R2.00.fits',hdu=1,field=freqn[freq]) #100-353
     MptsrP = hp.fitsfunc.read_map(d['win']+'HFI_Mask_PointSrc_2048_R2.00.fits',hdu=2,field=freqn[freq]) #100-353
     return MptsrI*MptsrP

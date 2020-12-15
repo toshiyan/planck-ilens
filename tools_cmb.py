@@ -4,7 +4,6 @@ import healpy as hp
 import scipy.signal as sp
 import pickle
 import os
-from astropy.io import fits
 import tqdm
 
 #from cmblensplus/wrap/
@@ -14,17 +13,19 @@ import curvedsky
 #from cmblensplus/utils/
 import misctools
 import analysis
+import cmb as CMB
 
 #local module
-import prjlib
+import local
 
 
-def save_beam(fsmap,fbeam,lmax):
-
-    if not os.path.exists(fbeam):
-        bl = fits.getdata(fsmap,extname='BEAMTF')
-        np.savetxt(fbeam,bl)
-
+def get_transfer(freq,lmax):
+    
+    if freq=='100':  return CMB.beam(9.5,lmax)
+    if freq=='143':  return CMB.beam(7.2,lmax)
+    if freq=='217':  return CMB.beam(5.0,lmax)
+    if freq=='353':  return CMB.beam(5.0,lmax)
+    
 
 def reduc_map(dtype,fmap,TK=2.726,field=0,scale=1.):
 
@@ -38,57 +39,56 @@ def reduc_map(dtype,fmap,TK=2.726,field=0,scale=1.):
     return rmap * scale / TK
 
 
-def map2alm(lmax,fmap,falm,mask,ibl,dtype,scale=1.,beta=0.,**kwargs):
+def map2alm(lmax,fmap,fTlm,fElm,fBlm,wind,ibl,dtype,scale=1.,beta=0.,**kwargs):
 
-    if misctools.check_path(falm,**kwargs): return
+    if misctools.check_path([fTlm,fElm,fBlm],**kwargs): return
     
-    Tmap = mask * reduc_map(dtype,fmap,scale=scale,field=0)
-    Qmap = mask * reduc_map(dtype,fmap,scale=scale,field=1)
-    Umap = mask * reduc_map(dtype,fmap,scale=scale,field=2)
+    Tmap = wind * reduc_map(dtype,fmap,scale=scale,field=0)
+    Qmap = wind * reduc_map(dtype,fmap,scale=scale,field=1)
+    Umap = wind * reduc_map(dtype,fmap,scale=scale,field=2)
 
     nside = hp.pixelfunc.get_nside(Tmap)
     # convert to alm
     Talm = curvedsky.utils.hp_map2alm(nside,lmax,lmax,Tmap)
     Ealm, Balm = curvedsky.utils.hp_map2alm_spin(nside,lmax,lmax,2,Qmap,Umap)
     # beam deconvolution
-    Talm *= ibl[:,None]#/pfunc[:,None]
-    Ealm *= ibl[:,None]#/pfunc[:,None]
-    Balm *= ibl[:,None]#/pfunc[:,None]
+    Talm *= ibl[:,None]
+    Ealm *= ibl[:,None]
+    Balm *= ibl[:,None]
     # isotropic rotation
     Ealm, Balm = analysis.ebrotate(beta,Ealm,Balm)
     
     # save to file
-    pickle.dump((Talm,Ealm,Balm),open(falm,"wb"),protocol=pickle.HIGHEST_PROTOCOL)
+    pickle.dump((Talm),open(fTlm,"wb"),protocol=pickle.HIGHEST_PROTOCOL)
+    pickle.dump((Ealm),open(fElm,"wb"),protocol=pickle.HIGHEST_PROTOCOL)
+    pickle.dump((Balm),open(fBlm,"wb"),protocol=pickle.HIGHEST_PROTOCOL)
 
 
-def map2alm_all(rlz,lmax,fmap,falm,wind,fbeam,dtype,sscale=1.,nscale=1.,stype=['s','n'],beta=0.,**kwargs):
-
-    # beam function
-    ibl = 1./np.loadtxt(fbeam)[:lmax+1]
+def map2alm_all(rlz,lmax,fmap,falm,wind,dtype,ibl,sscale=1.,nscale=1.,stype=['s','n'],beta=0.,**kwargs):
 
     for i in tqdm.tqdm(rlz,ncols=100,desc='map2alm:'):
-        
         if i == 0:  # real data
             map2alm(lmax,fmap['s'][i],falm['s']['T'][i],wind,ibl,dtype,**kwargs)
         else:  # simulation
-            if 's' in stype:  map2alm(lmax,fmap['s'][i],falm['s']['T'][i],wind,ibl,dtype,scale=sscale,beta=beta,**kwargs)
-            if 'n' in stype:  map2alm(lmax,fmap['n'][i],falm['n']['T'][i],wind,ibl,dtype,scale=nscale,**kwargs)
+            if 's' in stype:  map2alm(lmax,fmap['s'][i],falm['s']['T'][i],falm['s']['E'][i],falm['s']['B'][i],wind,ibl,dtype,scale=sscale,beta=beta,**kwargs)
+            if 'n' in stype:  map2alm(lmax,fmap['n'][i],falm['n']['T'][i],falm['n']['E'][i],falm['n']['B'][i],wind,ibl,dtype,scale=nscale,**kwargs)
 
 
-def alm_comb(rlz,falm,stype=['n','p'],overwrite=False,verbose=True):
+def alm_comb(rlz,falm,stype=['n'],mtype=['T','E','B'],overwrite=False,verbose=True):
 
     for i in tqdm.tqdm(rlz,ncols=100,desc='alm combine:'):
 
-        if misctools.check_path(falm['c']['T'][i],overwrite=overwrite,verbose=verbose):  continue
+        for m in mtype:
+            
+            if misctools.check_path(falm['c'][m][i],overwrite=overwrite,verbose=verbose):  continue
 
-        Talm, Ealm, Balm = pickle.load(open(falm['s']['T'][i],"rb"))
-        Tnlm, Enlm, Bnlm = 0.*Talm, 0.*Ealm, 0.*Balm
-        Tplm, Eplm, Bplm = 0.*Talm, 0.*Ealm, 0.*Balm
-        if i > 0:
-            if 'n' in stype:  Tnlm, Enlm, Bnlm = pickle.load(open(falm['n']['T'][i],"rb"))
-            if 'p' in stype:  Tplm, Eplm, Bplm = pickle.load(open(falm['p']['T'][i],"rb"))
+            salm = pickle.load(open(falm['s'][m][i],"rb"))
+            nalm, palm = 0.*salm, 0.*salm
+            if i > 0:
+                if 'n' in stype:  nalm = pickle.load(open(falm['n'][m][i],"rb"))
+                if 'p' in stype:  palm = pickle.load(open(falm['p'][m][i],"rb"))
 
-        pickle.dump( ( Talm+Tnlm+Tplm, Ealm+Enlm+Eplm, Balm+Bnlm+Bplm ), open(falm['c']['T'][i],"wb"), protocol=pickle.HIGHEST_PROTOCOL )
+            pickle.dump( ( salm+nalm+palm ), open(falm['c'][m][i],"wb"), protocol=pickle.HIGHEST_PROTOCOL )
 
 
 def wiener_cinv_core(i,dtype,M,cl,bl,Nij,fmap,falm,sscale,nscale,beta=0.,verbose=True,**kwargs):
@@ -122,10 +122,11 @@ def wiener_cinv_core(i,dtype,M,cl,bl,Nij,fmap,falm,sscale,nscale,beta=0.,verbose
         TQU[2,0,:] = Us + Un + Up
 
     # cinv
-    alm = curvedsky.cninv.cnfilter_freq(3,1,nside,lmax,cl,bl,Nij,T,filter='W',ro=10,verbose=verbose,**kwargs)
+    Talm, Ealm, Balm = curvedsky.cninv.cnfilter_freq(3,1,nside,lmax,cl,bl,Nij,T,filter='W',ro=10,verbose=verbose,**kwargs)
 
-    pickle.dump((alm),open(falm[i],"wb"),protocol=pickle.HIGHEST_PROTOCOL)
-
+    pickle.dump((Talm),open(falm['c']['T'][i],"wb"),protocol=pickle.HIGHEST_PROTOCOL)
+    pickle.dump((Ealm),open(falm['c']['E'][i],"wb"),protocol=pickle.HIGHEST_PROTOCOL)
+    pickle.dump((Balm),open(falm['c']['B'][i],"wb"),protocol=pickle.HIGHEST_PROTOCOL)
 
 
 def wiener_cinv(rlz,dtype,M,cl,fbeam,fmap,falm,sscale,nscale,beta=0,kwargs_ov={},kwargs_cinv={}):
@@ -146,45 +147,21 @@ def wiener_cinv(rlz,dtype,M,cl,fbeam,fmap,falm,sscale,nscale,beta=0,kwargs_ov={}
         wiener_cinv_core(i,dtype,M,cl,bl,Nij,fmap,falm,sscale,nscale,beta=beta,verbose=kwargs_ov['verbose'],**kwargs_cinv)
 
 
-
-def alm2aps(rlz,lmax,fcmb,w2,stype=['s','n','p','c'],cli_out=True,**kwargs_ov):  # compute aps
-    # output is ell, TT(s), TT(n), TT(p), TT(s+n+p)
-
-    if misctools.check_path(fcmb.scl,**kwargs_ov):  return
+def alm2aps(rlz,lmax,fcmb,w2,stype=['s','n','c'],**kwargs_ov):  # compute aps
 
     eL = np.linspace(0,lmax,lmax+1)
-    cl = np.zeros((len(rlz),4,lmax+1))
-
-    for ii, i in enumerate(tqdm.tqdm(rlz,ncols=100,desc='cmb alm2aps:')):
-
-        if 's' in stype:  salm = pickle.load(open(fcmb.alms['s']['T'][i],"rb"))
-        if i>0:
-            if 'n' in stype:  nalm = pickle.load(open(fcmb.alms['n']['T'][i],"rb"))
-            if 'p' in stype:  palm = pickle.load(open(fcmb.alms['p']['T'][i],"rb"))
-            if 'c' in stype:  oalm = pickle.load(open(fcmb.alms['c']['T'][i],"rb"))
-
-        #compute cls
-        if 's' in stype:  cl[ii,0,:] = curvedsky.utils.alm2cl(lmax,salm) / w2
-        if i>0:
-            if 'n' in stype:  cl[ii,1,:] = curvedsky.utils.alm2cl(lmax,nalm) / w2
-            if 'p' in stype:  cl[ii,2,:] = curvedsky.utils.alm2cl(lmax,palm) / w2
-            if 'c' in stype:  cl[ii,3,:] = curvedsky.utils.alm2cl(lmax,oalm) / w2
-                
-        if cli_out:  np.savetxt(fcmb.cl[i],np.concatenate((eL[None,:],cl[ii,:,:])).T)
-
-    # save to files
-    if rlz[-1]>2:
-        if kwargs_ov['verbose']:  print('cmb alm2aps: save sim')
-        i0 = max(0,1-rlz[0])
-        np.savetxt(fcmb.scl,np.concatenate((eL[None,:],np.mean(cl[i0:,:,:],axis=0),np.std(cl[i0:,:,:],axis=0))).T)
-
-    if rlz[0] == 0:
-        if kwargs_ov['verbose']:  print('cmb alm2aps: save real')
-        np.savetxt(fcmb.ocl,np.array((eL,cl[0,0,:])).T)
+    
+    for s in stype:
+        
+        cl = CMB.aps(rlz,lmax,falm[s],odd=True,w2=w2,mtype=['T','E','B'],fname=fcmb.cl[s],**kwargs_ov)
+    
+        if rlz[-1]>2:  # save mean
+            if kwargs_ov['verbose']:  print('cmb alm2aps: save sim')
+            i0 = max(0,1-rlz[0])
+            np.savetxt(fcmb.scl[s],np.concatenate((eL[None,:],np.mean(cl[i0:,:,:],axis=0),np.std(cl[i0:,:,:],axis=0))).T)
 
 
-
-def gen_ptsr(rlz,fcmb,fbeam,fseed,fcl,fmap,w,olmax=2048,ilmin=1000,ilmax=3000,overwrite=False,verbose=True): # generating ptsr contributions
+def gen_ptsr(rlz,fcmb,ibl,fseed,fcl,fmap,w,olmax=2048,ilmin=1000,ilmax=3000,overwrite=False,verbose=True): # generating ptsr contributions
 
     # difference spectrum with smoothing
     scl = (np.loadtxt(fcmb.scl)).T[1][:ilmax+1]
@@ -206,7 +183,7 @@ def gen_ptsr(rlz,fcmb,fbeam,fseed,fcl,fmap,w,olmax=2048,ilmin=1000,ilmax=3000,ov
             pickle.dump((alm),open(fseed[i],"wb"),protocol=pickle.HIGHEST_PROTOCOL)
 
     # load beam function
-    bl = np.loadtxt(fbeam)[:ilmax+1]
+    bl = 1./ibl[:ilmax+1]
     nside = hp.pixelfunc.get_nside(w)
     #pfunc = hp.sphtfunc.pixwin(nside)[:lmax+1]
 
@@ -227,60 +204,54 @@ def gen_ptsr(rlz,fcmb,fbeam,fseed,fcl,fmap,w,olmax=2048,ilmin=1000,ilmax=3000,ov
         pickle.dump((palm),open(fcmb.alms['p']['T'][i],"wb"),protocol=pickle.HIGHEST_PROTOCOL)
 
 
-
 def interface(run=[],kwargs_cmb={},kwargs_ov={},kwargs_cinv={}):
 
     # define parameters, filenames and functions
-    p = prjlib.init_analysis(**kwargs_cmb)
+    aobj = prjlib.init_analysis(**kwargs_cmb)
 
     # read survey window
-    w, M, wn = prjlib.set_mask(p.famask)
-    if p.fltr == 'cinv':  wn[:] = wn[0]
+    wind, M, wn = prjlib.set_mask(aobj.famask)
+    if aobj.fltr == 'cinv':  wn[:] = wn[0]
 
-    # read beam function
-    save_beam(p.fimap['s'][0],p.fbeam,p.lmax)
+    # approximate transfer function
+    ibl = get_transfer(aobj.freq,aobj.lmax)
 
     # generate ptsr
-    if 'ptsr' in run and p.biref==0:
-        if p.dtype=='dr2_nilc':  
+    if 'ptsr' in run and aobj.biref==0:
+        if aobj.dtype=='dr2_nilc':  
             ilmin, ilmax = 400, 3000
         else: 
-            ilmin, ilmax = 1000, p.lmax
+            ilmin, ilmax = 1000, aobj.lmax
         # compute signal and noise spectra but need to change file names
         q = prjlib.init_analysis(**kwargs_cmb)
         q.fcmb.scl = q.fcmb.scl.replace('.dat','_tmp.dat')
         q.fcmb.ocl = q.fcmb.ocl.replace('.dat','_tmp.dat')
         if not misctools.check_path(q.fcmb.scl,**kwargs_ov):
             # compute signal and noise alms
-            map2alm_all(p.rlz,ilmax,p.fimap,p.fcmb.alms,w,p.fbeam,p.dtype,p.sscale,p.nscale,**kwargs_ov)
-            alm2aps(p.rlz,ilmax,q.fcmb,wn[2],stype=['s','n'],cli_out=False,**kwargs_ov)
+            map2alm_all(aobj.rlz,ilmax,aobj.fimap,aobj.fcmb.alms,wind,aobj.dtype,ibl,aobj.sscale,aobj.nscale,**kwargs_ov)
+            alm2aps(aobj.rlz,ilmax,q.fcmb,wn[2],stype=['s','n'],cli_out=False,**kwargs_ov)
         # generate ptsr alm from obs - (sig+noi) spectrum
-        gen_ptsr(p.rlz,q.fcmb,p.fbeam,p.fpseed,p.fptsrcl,p.fimap,w,olmax=p.lmax,ilmin=ilmin,ilmax=ilmax,**kwargs_ov) # generate map and alm from above computed aps
-
+        gen_ptsr(aobj.rlz,q.fcmb,ibl,aobj.fpseed,aobj.fptsrcl,aobj.fimap,wind,olmax=aobj.lmax,ilmin=ilmin,ilmax=ilmax,**kwargs_ov) 
 
     # use normal transform to alm
-    if p.fltr == 'none':
+    if aobj.fltr == 'none':
         
-        stypes = ['s','n','p','c']
-    
         if 'alm' in run:  # combine signal, noise and ptsr
-            map2alm_all(p.rlz,p.lmax,p.fimap,p.fcmb.alms,w,p.fbeam,p.dtype,p.sscale,p.nscale,beta=p.biref,**kwargs_ov)
-            # combine signal, noise and ptsr alms
-            alm_comb(p.rlz,p.fcmb.alms,stype=stypes,**kwargs_ov)
+            map2alm_all(aobj.rlz,aobj.lmax,aobj.fimap,aobj.fcmb.alms,wind,aobj.dtype,ibl,aobj.sscale,aobj.nscale,beta=aobj.biref,**kwargs_ov)
+            alm_comb(aobj.rlz,aobj.fcmb.alms,**kwargs_ov)
 
         if 'aps' in run:  # compute cl
-            alm2aps(p.rlz,p.lmax,p.fcmb,wn[2],stype=stypes,**kwargs_ov)
+            alm2aps(aobj.rlz,aobj.lmax,aobj.fcmb,wn[2],**kwargs_ov)
 
     # map -> alm with cinv filtering
-    if p.fltr == 'cinv':  
+    if aobj.fltr == 'cinv':  
 
-        falm = p.fcmb.alms['c']['T']  #output file of cinv alms
+        falm = aobj.fcmb.alms['c']['T']  #output file of cinv alms
     
         if 'alm' in run:  # cinv filtering here
-            wiener_cinv(p.rlz,p.dtype,M,p.lcl[0:1,:p.lmax+1],p.fbeam,p.fimap,falm,p.sscale,p.nscale,beta=p.biref,kwargs_ov=kwargs_ov,kwargs_cinv=kwargs_cinv)
+            wiener_cinv(aobj.rlz,aobj.dtype,M,aobj.lcl[0:3,:p.lmax+1],ibl,aobj.fimap,falm,aobj.sscale,aobj.nscale,beta=aobj.biref,kwargs_ov=kwargs_ov,kwargs_cinv=kwargs_cinv)
 
         if 'aps' in run:  # aps of filtered spectrum
-            p.fcmb.alms['s']['T'] = falm # since cinv only save 'c', not 's'
-            alm2aps(p.rlz,p.lmax,p.fcmb,wn[0],stype=['s','c'],**kwargs_ov)
+            alm2aps(aobj.rlz,aobj.lmax,aobj.fcmb,wn[0],stype=['c'],**kwargs_ov)
     
 
