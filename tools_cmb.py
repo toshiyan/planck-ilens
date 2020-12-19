@@ -161,6 +161,17 @@ def alm2aps(rlz,lmax,fcmb,w2,stype=['s','n','c'],**kwargs_ov):  # compute aps
             np.savetxt(fcmb.scl[s],np.concatenate((eL[None,:],np.mean(cl[i0:,:,:],axis=0),np.std(cl[i0:,:,:],axis=0))).T)
 
 
+def load_fgmap(fgfiles):
+    
+    Tfg = {}
+    for key in fgfiles.keys():
+        print(key)
+        Tfg[key] = hp.fitsfunc.read_map(fgfiles[key],field=0)
+        Qfg[key] = hp.fitsfunc.read_map(fgfiles[key],field=1)
+        Ufg[key] = hp.fitsfunc.read_map(fgfiles[key],field=2)
+    return Tfg, Qfg, Ufg
+        
+
 def gen_ptsr(rlz,fcmb,ibl,fseed,fcl,fmap,w,olmax=2048,ilmin=1000,ilmax=3000,overwrite=False,verbose=True): # generating ptsr contributions
 
     # difference spectrum with smoothing

@@ -1,6 +1,6 @@
 #!/bin/bash
 
-dir="../data/PR3_local/foreground"
+dir="../data/PR3_local/foreground/"
 
 check_file(){
 	FILE=${dir}${1}

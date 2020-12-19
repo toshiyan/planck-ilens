@@ -128,6 +128,7 @@ class analysis:
 
         # PLANCK DR3 and FFP10 sims
         self.fimap = plf.load_iqu_filename(PR=3,dtype=self.dtype,freq=self.freq)
+        self.fgmap = plf.load_fg_filename(self.freq)
 
         # input klm realizations
         self.fiklm = [ plf.subd['pr2']['lens'] + 'sky_klms/sim_'+x[1:]+'_klm.fits' for x in ids ]
