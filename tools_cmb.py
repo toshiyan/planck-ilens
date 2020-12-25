@@ -19,59 +19,47 @@ import cmb as CMB
 import local
 
 
-def get_transfer(freq,lmax):
-    
-    if freq=='100':  return CMB.beam(9.5,lmax)
-    if freq=='143':  return CMB.beam(7.2,lmax)
-    if freq=='217':  return CMB.beam(5.0,lmax)
-    if freq=='353':  return CMB.beam(5.0,lmax)
-    
+def reduc_map(fmap,TK=2.726,field=0,scale=1.):
 
-def reduc_map(dtype,fmap,TK=2.726,field=0,scale=1.):
-
-    if 'hmhd' in dtype:
-        map1 = hp.fitsfunc.read_map(fmap[0],field=field,verbose=False)
-        map2 = hp.fitsfunc.read_map(fmap[1],field=field,verbose=False)
-        rmap = (map1-map2)*.5
-    else:
-        rmap = hp.fitsfunc.read_map(fmap,field=field,verbose=False)
+    rmap = hp.fitsfunc.read_map(fmap,field=field,verbose=False)
 
     return rmap * scale / TK
 
 
-def map2alm(lmax,fmap,fTlm,fElm,fBlm,wind,ibl,dtype,scale=1.,beta=0.,**kwargs):
+def map2alm(i,s,aobj,wind,scale=1.,**kwargs):
 
-    if misctools.check_path([fTlm,fElm,fBlm],**kwargs): return
+    for m in ['T','E','B']:  if misctools.check_path(aobj.fcmb.alms[s][m][i],**kwargs): return
     
-    Tmap = wind * reduc_map(dtype,fmap,scale=scale,field=0)
-    Qmap = wind * reduc_map(dtype,fmap,scale=scale,field=1)
-    Umap = wind * reduc_map(dtype,fmap,scale=scale,field=2)
+    Tmap = wind * reduc_map(aobj.fimap[s][i],scale=scale,field=0)
+    Qmap = wind * reduc_map(aobj.fimap[s][i],scale=scale,field=1)
+    Umap = wind * reduc_map(aobj.fimap[s][i],scale=scale,field=2)
 
-    nside = hp.pixelfunc.get_nside(Tmap)
     # convert to alm
-    Talm = curvedsky.utils.hp_map2alm(nside,lmax,lmax,Tmap)
-    Ealm, Balm = curvedsky.utils.hp_map2alm_spin(nside,lmax,lmax,2,Qmap,Umap)
+    nside = hp.pixelfunc.get_nside(Tmap)
+    Talm = curvedsky.utils.hp_map2alm(nside,aobj.lmax,aobj.lmax,Tmap)
+    Ealm, Balm = curvedsky.utils.hp_map2alm_spin(nside,aobj.lmax,aobj.lmax,2,Qmap,Umap)
     # beam deconvolution
     Talm *= ibl[:,None]
     Ealm *= ibl[:,None]
     Balm *= ibl[:,None]
     # isotropic rotation
-    Ealm, Balm = analysis.ebrotate(beta,Ealm,Balm)
+    if s=='s' and i!=0:
+        Ealm, Balm = analysis.ebrotate(aobj.biref,Ealm,Balm)
     
     # save to file
-    pickle.dump((Talm),open(fTlm,"wb"),protocol=pickle.HIGHEST_PROTOCOL)
-    pickle.dump((Ealm),open(fElm,"wb"),protocol=pickle.HIGHEST_PROTOCOL)
-    pickle.dump((Balm),open(fBlm,"wb"),protocol=pickle.HIGHEST_PROTOCOL)
+    pickle.dump((Talm),open(aobj.fcmb.alms[s]['T'][i],"wb"),protocol=pickle.HIGHEST_PROTOCOL)
+    pickle.dump((Ealm),open(aobj.fcmb.alms[s]['E'][i],"wb"),protocol=pickle.HIGHEST_PROTOCOL)
+    pickle.dump((Balm),open(aobj.fcmb.alms[s]['B'][i],"wb"),protocol=pickle.HIGHEST_PROTOCOL)
 
 
-def map2alm_all(rlz,lmax,fmap,falm,wind,dtype,ibl,sscale=1.,nscale=1.,stype=['s','n'],beta=0.,**kwargs):
-
-    for i in tqdm.tqdm(rlz,ncols=100,desc='map2alm:'):
+def map2alm_all(aobj,wind,stype=['s','n'],**kwargs):
+    
+    for i in tqdm.tqdm(aobj.rlz,ncols=100,desc='map2alm:'):
         if i == 0:  # real data
-            map2alm(lmax,fmap['s'][i],falm['s']['T'][i],wind,ibl,dtype,**kwargs)
+            map2alm(0,'s',aobj,wind,**kwargs)
         else:  # simulation
-            if 's' in stype:  map2alm(lmax,fmap['s'][i],falm['s']['T'][i],falm['s']['E'][i],falm['s']['B'][i],wind,ibl,dtype,scale=sscale,beta=beta,**kwargs)
-            if 'n' in stype:  map2alm(lmax,fmap['n'][i],falm['n']['T'][i],falm['n']['E'][i],falm['n']['B'][i],wind,ibl,dtype,scale=nscale,**kwargs)
+            for s in stype:
+                map2alm(i,s,aobj,wind,**kwargs)
 
 
 def alm_comb(rlz,falm,stype=['n'],mtype=['T','E','B'],overwrite=False,verbose=True):
@@ -218,37 +206,30 @@ def gen_ptsr(rlz,fcmb,ibl,fseed,fcl,fmap,w,olmax=2048,ilmin=1000,ilmax=3000,over
 def interface(run=[],kwargs_cmb={},kwargs_ov={},kwargs_cinv={}):
 
     # define parameters, filenames and functions
-    aobj = prjlib.init_analysis(**kwargs_cmb)
+    aobj = local.init_analysis(**kwargs_cmb)
 
     # read survey window
-    wind, M, wn = prjlib.set_mask(aobj.famask)
+    wind, M, wn = local.set_mask(aobj.famask)
     if aobj.fltr == 'cinv':  wn[:] = wn[0]
 
-    # approximate transfer function
-    ibl = get_transfer(aobj.freq,aobj.lmax)
-
     # generate ptsr
-    if 'ptsr' in run and aobj.biref==0:
-        if aobj.dtype=='dr2_nilc':  
-            ilmin, ilmax = 400, 3000
-        else: 
-            ilmin, ilmax = 1000, aobj.lmax
+    if 'fg' in run and aobj.biref==0:
         # compute signal and noise spectra but need to change file names
-        q = prjlib.init_analysis(**kwargs_cmb)
+        q = local.init_analysis(**kwargs_cmb)
         q.fcmb.scl = q.fcmb.scl.replace('.dat','_tmp.dat')
         q.fcmb.ocl = q.fcmb.ocl.replace('.dat','_tmp.dat')
         if not misctools.check_path(q.fcmb.scl,**kwargs_ov):
             # compute signal and noise alms
-            map2alm_all(aobj.rlz,ilmax,aobj.fimap,aobj.fcmb.alms,wind,aobj.dtype,ibl,aobj.sscale,aobj.nscale,**kwargs_ov)
+            map2alm_all(aobj,wind,**kwargs_ov)
             alm2aps(aobj.rlz,ilmax,q.fcmb,wn[2],stype=['s','n'],cli_out=False,**kwargs_ov)
         # generate ptsr alm from obs - (sig+noi) spectrum
-        gen_ptsr(aobj.rlz,q.fcmb,ibl,aobj.fpseed,aobj.fptsrcl,aobj.fimap,wind,olmax=aobj.lmax,ilmin=ilmin,ilmax=ilmax,**kwargs_ov) 
+        gen_ptsr(aobj.rlz,q.fcmb,aobj.ibl,aobj.fpseed,aobj.fptsrcl,aobj.fimap,wind,olmax=aobj.lmax,ilmin=ilmin,ilmax=ilmax,**kwargs_ov) 
 
     # use normal transform to alm
     if aobj.fltr == 'none':
         
         if 'alm' in run:  # combine signal, noise and ptsr
-            map2alm_all(aobj.rlz,aobj.lmax,aobj.fimap,aobj.fcmb.alms,wind,aobj.dtype,ibl,aobj.sscale,aobj.nscale,beta=aobj.biref,**kwargs_ov)
+            map2alm_all(aobj,wind,**kwargs_ov)
             alm_comb(aobj.rlz,aobj.fcmb.alms,**kwargs_ov)
 
         if 'aps' in run:  # compute cl
@@ -260,7 +241,7 @@ def interface(run=[],kwargs_cmb={},kwargs_ov={},kwargs_cinv={}):
         falm = aobj.fcmb.alms['c']['T']  #output file of cinv alms
     
         if 'alm' in run:  # cinv filtering here
-            wiener_cinv(aobj.rlz,aobj.dtype,M,aobj.lcl[0:3,:p.lmax+1],ibl,aobj.fimap,falm,aobj.sscale,aobj.nscale,beta=aobj.biref,kwargs_ov=kwargs_ov,kwargs_cinv=kwargs_cinv)
+            wiener_cinv(aobj.rlz,aobj.dtype,M,aobj.lcl[0:3,:p.lmax+1],aobj.ibl,aobj.fimap,falm,aobj.sscale,aobj.nscale,beta=aobj.biref,kwargs_ov=kwargs_ov,kwargs_cinv=kwargs_cinv)
 
         if 'aps' in run:  # aps of filtered spectrum
             alm2aps(aobj.rlz,aobj.lmax,aobj.fcmb,wn[0],stype=['c'],**kwargs_ov)

@@ -38,7 +38,7 @@ def data_directory():
 # * Define CMB file names
 class cmb:
 
-    def __init__(self,aobj,mtype=['T']):
+    def __init__(self,aobj,mtype=['T','E','B']):
 
         # set directory
         d = data_directory()
@@ -106,6 +106,9 @@ class analysis:
 
         # noise scaling (correction to underestimate of noise in sim)
         self.nscale = 1.
+        
+        # transfer
+        self.ibl = get_transfer(self.freq,self.lmax)
 
 
     def filename(self):
@@ -173,7 +176,7 @@ class analysis:
         # set mask filename
         if   self.wind == 'Fullsky':
             self.fmask = ''
-        elif self.wind == 'LmaskDR3':
+        elif self.wind == 'Lmask':
             self.fmask = dwin + 'COM_Mask_Lensing_2048_R3.00.fits'
         elif self.wind == 'G60':
             self.fmask = dwin + 'COM_Mask_Lensing_2048_R2.00_G60.fits'
@@ -274,6 +277,18 @@ def mask_ptsr(freq):
     MptsrI = hp.fitsfunc.read_map(d['win']+'HFI_Mask_PointSrc_2048_R2.00.fits',hdu=1,field=freqn[freq]) #100-353
     MptsrP = hp.fitsfunc.read_map(d['win']+'HFI_Mask_PointSrc_2048_R2.00.fits',hdu=2,field=freqn[freq]) #100-353
     return MptsrI*MptsrP
+
+
+#-----------------------------
+# transfer function
+#-----------------------------
+
+def get_transfer(freq,lmax):
+    
+    if freq=='100':  return CMB.beam(9.5,lmax)
+    if freq=='143':  return CMB.beam(7.2,lmax)
+    if freq=='217':  return CMB.beam(5.0,lmax)
+    if freq=='353':  return CMB.beam(5.0,lmax)    
 
 
 #-----------------------------

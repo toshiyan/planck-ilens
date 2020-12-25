@@ -64,7 +64,8 @@ kwargs_cmb  = {\
     'snmin':0, \
     'snmax':100, \
     'dtype':'full', \
-    'wind':'base', \
+    'wind':'Lmask', \
+    #'wind':'base', \
     'ascale':1., \
     'lmax':2048, \
     'fltr':'none', \
