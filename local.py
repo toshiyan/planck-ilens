@@ -195,8 +195,9 @@ class analysis:
     def array(self):
 
         #multipole
-        self.l  = np.linspace(0,self.lmax,self.lmax+1)
-        self.kL = self.l*(self.l+1)*.5
+        self.l    = np.linspace(0,self.lmax,self.lmax+1)
+        self.kL   = self.l*(self.l+1)*.5
+        self.lfac = self.l*(self.l+1)/(2.*np.pi)
 
         #theoretical cl
         self.lcl = np.zeros((5,self.lmax+1)) # TT, EE, BB, TE, PP
@@ -253,7 +254,7 @@ def mask_co_line(freq):
     
     d = data_directory()
     
-    if freq!='143':
+    if freq not in ['143','857']:
         # ratio in logscale
         McoI = hp.read_map(d['win']+'HFI_BiasMap_'+str(freq)+'-CO-noiseRatio_2048_R3.00_full.fits',field=0)
         McoQ = hp.read_map(d['win']+'HFI_BiasMap_'+str(freq)+'-CO-noiseRatio_2048_R3.00_full.fits',field=1)
@@ -273,9 +274,12 @@ def mask_co_line(freq):
 
 def mask_ptsr(freq):
     d = data_directory()
-    freqn = {'100': 0, '143': 1, '217': 2, '353': 3}
+    freqn = {'100': 0, '143': 1, '217': 2, '353': 3, '857': 5}
     MptsrI = hp.fitsfunc.read_map(d['win']+'HFI_Mask_PointSrc_2048_R2.00.fits',hdu=1,field=freqn[freq]) #100-353
-    MptsrP = hp.fitsfunc.read_map(d['win']+'HFI_Mask_PointSrc_2048_R2.00.fits',hdu=2,field=freqn[freq]) #100-353
+    if freq == '857':
+        MptsrP = 1.
+    else:
+        MptsrP = hp.fitsfunc.read_map(d['win']+'HFI_Mask_PointSrc_2048_R2.00.fits',hdu=2,field=freqn[freq]) #100-353
     return MptsrI*MptsrP
 
 
@@ -289,6 +293,7 @@ def get_transfer(freq,lmax):
     if freq=='143':  return CMB.beam(7.2,lmax)
     if freq=='217':  return CMB.beam(5.0,lmax)
     if freq=='353':  return CMB.beam(5.0,lmax)    
+    if freq=='857':  return CMB.beam(2.0,lmax)    
 
 
 #-----------------------------

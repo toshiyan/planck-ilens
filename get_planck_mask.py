@@ -6,7 +6,8 @@ warnings.filterwarnings("ignore")
     
 ascale = 0.5
 
-for freq in ['100','143','217','353']:
+#for freq in ['100','143','217','353']:
+for freq in ['857']:
 
     # ptsr mask
     Mptsr = local.mask_ptsr(freq)

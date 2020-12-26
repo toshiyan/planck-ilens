@@ -13,22 +13,38 @@ import quad_func
 import misctools
 
 # local
-import prjlib
+import local
 
 
-def init_quad(ids,stag,rlz=[],**kwargs):
+def init_quad(ids,stag,rlz=[],rlmin=100,rlmax=2048,**kwargs):
     
     d = prjlib.data_directory()
+
+    kwargs = {}
+    kwargs['ilens'] = {\
+        'rlmin':rlmin, \
+        'rlmax':rlmax, \
+        'n0min':1, \
+        'n0max':int(kwargs['snmax']/2), \
+        'mfmin':1, \
+        'mfmax':kwargs['snmax'], \
+        'rdmin':1, \
+        'rdmax':kwargs['snmax'], \
+        'qlist':['TB','EB'], \
+        'overwrite':kwargs['overwrite'], \
+        'verbose':kwargs['verbose'] \
+    }
+    
+    kwargs['lens'] = kwargs['ilens']
+    kwargs['lens']['qlist'] = ['TT','TE','EE','TB','EB']
+    
     # setup parameters for lensing reconstruction (see cmblensplus/utils/quad_func.py)
-    qrlen = quad_func.quad(rlz=rlz,stag=stag,root=d['root'],ids=ids,qtype='lens',**kwargs)
-    qilen = quad_func.quad(rlz=rlz,stag=stag,root=d['root'],ids=ids,qtype='ilens',**kwargs)
-
-    return qrlen, qilen
+    return {qtype: quad_func.quad(rlz=rlz,stag=stag,root=d['root'],ids=ids,qtype=qtype,**kwargs[qtype]) for qtype in ['lens','ilens'] }
 
 
-def aps(rlz,qobj,fklm=None,q='TT',**kwargs_ov):
+def aps(rlz,qobj,fklm=None,fcib=None,q='TT',**kwargs_ov):
 
-    cl = np.zeros((len(rlz),3,qobj.olmax+1))
+    cl = np.zeros((len(rlz),5,qobj.olmax+1))
     
     for i in tqdm.tqdm(rlz,ncols=100,desc='aps ('+qobj.qtype+')'):
         
@@ -51,6 +67,14 @@ def aps(rlz,qobj,fklm=None,q='TT',**kwargs_ov):
             # input
             cl[i,2,:] = curvedsky.utils.alm2cl(qobj.olmax,iklm)
 
+        if fcib is not None:
+            # load cib alm
+            Ilm = pickle.load(open(fcib[i],"rb"))
+            # cross with cib
+            cl[i,3,:] = curvedsky.utils.alm2cl(qobj.olmax,alm,Ilm)/qobj.wn[2]
+            # cib
+            cl[i,4,:] = curvedsky.utils.alm2cl(qobj.olmax,Ilm)
+
         np.savetxt(qobj.f[q].cl[i],np.concatenate((qobj.l[None,:],cl[i,:,:])).T)
 
     # save to files
@@ -59,12 +83,12 @@ def aps(rlz,qobj,fklm=None,q='TT',**kwargs_ov):
         np.savetxt(qobj.f[q].mcls,np.concatenate((qobj.l[None,:],np.average(cl[i0:,:,:],axis=0),np.std(cl[i0:,:,:],axis=0))).T)
 
 
-def interface(qrun=['norm','qrec','n0','mean'],run=['lens','ilens'],kwargs_ov={},kwargs_cmb={},kwargs_qrec={},ep=1e-30):
+def interface(run=['norm','qrec','n0','mean'],qtypes=['lens','ilens'],kwargs_ov={},kwargs_cmb={},rlmin=100,rlmax=2048,ep=1e-30):
     
     p = prjlib.init_analysis(**kwargs_cmb)
     __, __, wn = prjlib.set_mask(p.famask)
 
-    # load obscls
+    #//// load obscls ////#
     if p.fltr == 'none':
         ocl = np.loadtxt(p.fcmb.scl,unpack=True)[4:5]
         ifl = ocl.copy()
@@ -85,15 +109,16 @@ def interface(qrun=['norm','qrec','n0','mean'],run=['lens','ilens'],kwargs_ov={}
 
         wn[:] = wn[0]
 
-    # define objects
-    qrlen, qilen = init_quad(p.ids,p.stag,rlz=p.rlz,wn=wn,lcl=p.lcl,ocl=ocl,ifl=ifl,falm=p.fcmb.alms['c'],**kwargs_qrec,**kwargs_ov)
+    #//// define objects ////#
+    qobj = init_quad(p.ids,p.stag,rlz=p.rlz,wn=wn,lcl=p.lcl,ocl=ocl,ifl=ifl,falm=p.fcmb.alms['c'],rlmin=rlmin,rlmax=rlmax,**kwargs_cmb,**kwargs_ov)
 
     # reconstruction
-    if 'lens' in run:
-        qrlen.qrec_flow(run=qrun)
-        if 'aps' in qrun:  aps(p.rlz,qrlen,fklm=p.fikln,**kwargs_ov)
-
-    if 'ilens' in run:
-        qilen.qrec_flow(run=qrun)
-        if 'aps' in qrun:  aps(p.rlz,qilen,fklm=p.fiklm,**kwargs_ov)
+    for qtype in qtypes:
+        qobj[qtype].qrec_flow(run=run)
+        if 'aps' in run:
+            bobj = aobj
+            bobj.freq = '857'
+            #aobj = local.init_analysis(freq='857')
+            for q in qobj[qtype].qlist:
+                aps(p.rlz,qobj[qtype],fklm=p.fiklm,fcib=aobj.fcmb.alms['c']['T'],q=q,**kwargs_ov)
 
